@@ -162,8 +162,37 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
         All ghosts should be modeled as choosing uniformly at random from their
         legal moves.
         """
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        def expecti(state, agentIndex, depth):
+            # Terminal or depth cutoff
+            if state.isWin() or state.isLose() or depth == self.depth:
+                return self.evaluationFunction(state)
+
+            numAgents = state.getNumAgents()
+            nextAgent = (agentIndex + 1) % numAgents
+            nextDepth = depth + 1 if nextAgent == 0 else depth
+
+            legal = state.getLegalActions(agentIndex)
+            if not legal:
+                return self.evaluationFunction(state)
+
+            if agentIndex == 0:  # Pacman (max node)
+                values = [expecti(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
+                          for action in legal]
+                return max(values)
+
+            # Ghosts (chance node): uniform expectation
+            values = [expecti(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
+                      for action in legal]
+            return sum(values) / float(len(values))
+
+        legalActions = gameState.getLegalActions(0)
+        if not legalActions:
+            return Directions.STOP
+
+        # Choose the action with highest expectimax value; break ties by order in list
+        bestAction = max(legalActions,
+                         key=lambda action: expecti(gameState.generateSuccessor(0, action), 1, 0))
+        return bestAction
 
 def betterEvaluationFunction(currentGameState: GameState):
     """
@@ -172,8 +201,50 @@ def betterEvaluationFunction(currentGameState: GameState):
 
     DESCRIPTION: <write something here so we know what you did>
     """
-    "*** YOUR CODE HERE ***"
-    util.raiseNotDefined()
+    # Base score from the environment
+    if currentGameState.isWin():
+        return float('inf')
+    if currentGameState.isLose():
+        return float('-inf')
+
+    score = currentGameState.getScore()
+
+    pacPos = currentGameState.getPacmanPosition()
+    foodList = currentGameState.getFood().asList()
+    capsules = currentGameState.getCapsules()
+    ghostStates = currentGameState.getGhostStates()
+
+    # Food heuristic: encourage being close to the nearest food and finishing all food
+    if foodList:
+        closestFood = min(manhattanDistance(pacPos, food) for food in foodList)
+        score += 1.5 / (closestFood + 1.0)
+        score -= 4.0 * len(foodList)
+
+    # Capsule heuristic: encourage picking up capsules, more if ghosts are active
+    if capsules:
+        closestCap = min(manhattanDistance(pacPos, cap) for cap in capsules)
+        score += 1.2 / (closestCap + 1.0)
+        score -= 2.5 * len(capsules)
+
+    # Ghost heuristics
+    activeGhostPenalty = 0.0
+    scaredGhostReward = 0.0
+
+    for ghost in ghostStates:
+        gpos = ghost.getPosition()
+        dist = manhattanDistance(pacPos, gpos)
+        if ghost.scaredTimer > 0:
+            if dist > 0:
+                scaredGhostReward += 2.0 * ghost.scaredTimer / dist
+        else:
+            if dist == 0:
+                return float('-inf')
+            activeGhostPenalty += 3.5 / dist
+
+    score -= activeGhostPenalty
+    score += scaredGhostReward
+
+    return score
 
 # Abbreviation
 better = betterEvaluationFunction
