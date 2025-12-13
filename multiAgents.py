@@ -162,37 +162,62 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
         All ghosts should be modeled as choosing uniformly at random from their
         legal moves.
         """
-        def expecti(state, agentIndex, depth):
-            # Terminal or depth cutoff
-            if state.isWin() or state.isLose() or depth == self.depth:
+        def value(state, agentIndex, depth):
+            # Cut off on win/lose
+            if state.isWin() or state.isLose():
                 return self.evaluationFunction(state)
-
-            numAgents = state.getNumAgents()
-            nextAgent = (agentIndex + 1) % numAgents
-            nextDepth = depth + 1 if nextAgent == 0 else depth
 
             legal = state.getLegalActions(agentIndex)
             if not legal:
                 return self.evaluationFunction(state)
 
-            if agentIndex == 0:  # Pacman (max node)
-                values = [expecti(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
-                          for action in legal]
-                return max(values)
+            numAgents = state.getNumAgents()
+            nextAgent = (agentIndex + 1) % numAgents
+            
+            # Depth represents how many times Pacman has moved in this branch
+            # When we cycle back to Pacman (nextAgent == 0), we increment depth
+            if nextAgent == 0:
+                nextDepth = depth + 1
+            else:
+                nextDepth = depth
 
-            # Ghosts (chance node): uniform expectation
-            values = [expecti(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
-                      for action in legal]
-            return sum(values) / float(len(values))
+            # If we're at a Pacman node and we've reached the target depth, evaluate successors
+            if agentIndex == 0 and depth == self.depth:
+                return max(self.evaluationFunction(state.generateSuccessor(agentIndex, action))
+                           for action in legal)
+
+            if agentIndex == 0:
+                # Pacman node: maximize expected value
+                return max(value(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
+                           for action in legal)
+            else:
+                # Ghost node: uniform expectation over legal actions
+                return sum(value(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
+                           for action in legal) / float(len(legal))
 
         legalActions = gameState.getLegalActions(0)
         if not legalActions:
             return Directions.STOP
 
-        # Choose the action with highest expectimax value; break ties by order in list
-        bestAction = max(legalActions,
-                         key=lambda action: expecti(gameState.generateSuccessor(0, action), 1, 0))
-        return bestAction
+        # Ban STOP unless it is the only legal action
+        filteredActions = [a for a in legalActions if a != Directions.STOP]
+        if filteredActions:
+            legalActions = filteredActions
+
+        # Evaluate each action from the root; random tie-breaking among best
+        scores = []
+        for action in legalActions:
+            successor = gameState.generateSuccessor(0, action)
+            # Start depth at 0: depth represents how many times Pacman has moved in this branch
+            # We've generated one successor, now look ahead self.depth more Pacman moves
+            scores.append((value(successor, 1, 0), action))
+
+        if not scores:
+            return Directions.STOP
+
+        bestScore = max(score for score, _ in scores)
+        bestActions = [action for score, action in scores if score == bestScore]
+        return random.choice(bestActions)
 
 def betterEvaluationFunction(currentGameState: GameState):
     """
@@ -201,48 +226,64 @@ def betterEvaluationFunction(currentGameState: GameState):
 
     DESCRIPTION: <write something here so we know what you did>
     """
-    # Base score from the environment
+    # Fast heuristics only (Manhattan-based). Weighted linear combination of:
+    #   - base game score
+    #   - food proximity + remaining food penalty
+    #   - capsule proximity + remaining capsule penalty
+    #   - scared ghost chasing bonus (when reachable in time)
+    #   - active ghost safety penalty with a hard kill-avoidance gate
     if currentGameState.isWin():
         return float('inf')
     if currentGameState.isLose():
         return float('-inf')
 
-    score = currentGameState.getScore()
+    epsilon = 1e-3  # avoid divide-by-zero
 
-    pacPos = currentGameState.getPacmanPosition()
-    foodList = currentGameState.getFood().asList()
+    pac_pos = currentGameState.getPacmanPosition()
+    food_list = currentGameState.getFood().asList()
     capsules = currentGameState.getCapsules()
-    ghostStates = currentGameState.getGhostStates()
+    ghost_states = currentGameState.getGhostStates()
 
-    # Food heuristic: encourage being close to the nearest food and finishing all food
-    if foodList:
-        closestFood = min(manhattanDistance(pacPos, food) for food in foodList)
-        score += 1.5 / (closestFood + 1.0)
-        score -= 4.0 * len(foodList)
+    score = float(currentGameState.getScore())
 
-    # Capsule heuristic: encourage picking up capsules, more if ghosts are active
+    # Food: get closer to the nearest pellet and clear the board quickly
+    if food_list:
+        closest_food = min(manhattanDistance(pac_pos, food) for food in food_list)
+        score += 9.0 / (closest_food + 1.0)  # strong pull toward nearby food
+        score -= 4.5 * len(food_list)        # discourage leaving pellets behind
+
+    # Capsules: high value when available to flip ghost danger -> opportunity
     if capsules:
-        closestCap = min(manhattanDistance(pacPos, cap) for cap in capsules)
-        score += 1.2 / (closestCap + 1.0)
-        score -= 2.5 * len(capsules)
+        closest_cap = min(manhattanDistance(pac_pos, cap) for cap in capsules)
+        score += 12.0 / (closest_cap + 1.0)
+        score -= 8.0 * len(capsules)
 
-    # Ghost heuristics
-    activeGhostPenalty = 0.0
-    scaredGhostReward = 0.0
+    # Ghost handling
+    active_penalty = 0.0
+    scared_bonus = 0.0
 
-    for ghost in ghostStates:
+    for ghost in ghost_states:
         gpos = ghost.getPosition()
-        dist = manhattanDistance(pacPos, gpos)
-        if ghost.scaredTimer > 0:
-            if dist > 0:
-                scaredGhostReward += 2.0 * ghost.scaredTimer / dist
-        else:
-            if dist == 0:
-                return float('-inf')
-            activeGhostPenalty += 3.5 / dist
+        dist = float(manhattanDistance(pac_pos, gpos))
+        scared_time = ghost.scaredTimer
 
-    score -= activeGhostPenalty
-    score += scaredGhostReward
+        if scared_time > 0:
+            if dist < 1.0:
+                # Can eat immediately; big reward that scales with timer
+                scared_bonus += 60.0 + 3.0 * scared_time
+            else:
+                # Only reward chasing if we can realistically reach before timer ends
+                reachable_factor = max(scared_time - dist, 0.0)
+                scared_bonus += (25.0 * reachable_factor) / (dist + epsilon)
+        else:
+            # Hard avoidance: being adjacent (or on) an active ghost is deadly
+            if dist < 2.0:
+                return -1e9
+            # Softer penalty encouraging a safety buffer
+            active_penalty += 18.0 / (dist + 1.0)
+
+    score += scared_bonus
+    score -= active_penalty
 
     return score
 
