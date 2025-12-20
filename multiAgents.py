@@ -30,6 +30,8 @@ class ReflexAgent(Agent):
     """
 
 
+
+
     def getAction(self, gameState: GameState):
         """
         You do not need to change this method, but you're welcome to.
@@ -151,143 +153,240 @@ class AlphaBetaAgent(MultiAgentSearchAgent):
         util.raiseNotDefined()
 
 
-class ExpectimaxAgent(MultiAgentSearchAgent):
-    """
-      Your expectimax agent (question 4)
-    """
+# multiAgents.py
+# --------------
+# ... (license and imports)
 
+class ExpectimaxAgent(MultiAgentSearchAgent):
     def getAction(self, gameState: GameState):
         """
-        Returns the expectimax action using self.depth and self.evaluationFunction
-
-        All ghosts should be modeled as choosing uniformly at random from their
-        legal moves.
+        Enhanced expectimax with smart depth management.
         """
-        "*** YOUR CODE HERE ***"
+        # Adaptive depth based on food count
+        foodCount = gameState.getNumFood()
+        if foodCount < 10:  # Endgame - search deeper
+            effectiveDepth = min(self.depth + 1, 4)
+        else:
+            effectiveDepth = self.depth
 
-        def expectimax(state, depth, agentIndex):
-            if state.isWin() or state.isLose() or depth == self.depth:
+        def expectimax(state, depth, agentIndex, currentDepth=0):
+            # Check terminal states
+            if state.isWin() or state.isLose():
+                return self.evaluationFunction(state), None
+
+            # Check depth limit
+            if currentDepth >= effectiveDepth * state.getNumAgents():
                 return self.evaluationFunction(state), None
 
             numAgents = state.getNumAgents()
+            nextAgent = (agentIndex + 1) % numAgents
+            nextDepth = currentDepth + 1
 
-            if agentIndex == 0:  # Pacman - MAX düğümü
+            # Pacman's turn (MAX)
+            if agentIndex == 0:
                 bestValue = float('-inf')
                 bestAction = None
-                for action in state.getLegalActions(agentIndex):
+                legalActions = state.getLegalActions(agentIndex)
+
+                # Filter out STOP if possible
+                if Directions.STOP in legalActions and len(legalActions) > 1:
+                    legalActions = [a for a in legalActions if a != Directions.STOP]
+
+                for action in legalActions:
                     successor = state.generateSuccessor(agentIndex, action)
-                    nextAgent = (agentIndex + 1) % numAgents
-                    nextDepth = depth + 1 if nextAgent == 0 else depth
-                    value, _ = expectimax(successor, nextDepth, nextAgent)
-                    if value > bestValue:
+                    value, _ = expectimax(successor, depth, nextAgent, nextDepth)
+
+                    # Tie-breaking: prefer non-reverse moves
+                    if abs(value - bestValue) < 0.001:  # Almost equal
+                        pacmanState = state.getPacmanState()
+                        if pacmanState.configuration:
+                            currentDir = pacmanState.configuration.direction
+                            reverseDir = Directions.REVERSE[currentDir] if currentDir in Directions.REVERSE else None
+                            if action != reverseDir and bestAction == reverseDir:
+                                bestValue = value
+                                bestAction = action
+                    elif value > bestValue:
                         bestValue = value
                         bestAction = action
+
                 return bestValue, bestAction
 
-            else:  # Ghost - CHANCE düğümü
-                totalValue = 0
+            # Ghost's turn (EXPECTED)
+            else:
                 actions = state.getLegalActions(agentIndex)
-                prob = 1.0 / len(actions) if actions else 0
+                if not actions:
+                    return self.evaluationFunction(state), None
+
+                # Calculate expected value
+                expectedValue = 0
+                prob = 1.0 / len(actions)
 
                 for action in actions:
                     successor = state.generateSuccessor(agentIndex, action)
-                    nextAgent = (agentIndex + 1) % numAgents
-                    nextDepth = depth + 1 if nextAgent == 0 else depth
-                    value, _ = expectimax(successor, nextDepth, nextAgent)
-                    totalValue += prob * value
+                    value, _ = expectimax(successor, depth, nextAgent, nextDepth)
+                    expectedValue += prob * value
 
-                return totalValue, None
+                return expectedValue, None
 
-        # Kök düğüm için aksiyonu al
-        _, bestAction = expectimax(gameState, 0, 0)
+        # Get best action
+        _, bestAction = expectimax(gameState, 0, 0, 0)
+
+        # Fallback
+        if bestAction is None:
+            legalActions = gameState.getLegalActions(0)
+            if Directions.STOP in legalActions and len(legalActions) > 1:
+                legalActions = [a for a in legalActions if a != Directions.STOP]
+            if legalActions:
+                # Prefer forward movement
+                pacmanState = gameState.getPacmanState()
+                if pacmanState.configuration:
+                    currentDir = pacmanState.configuration.direction
+                    forwardActions = [a for a in legalActions if a != Directions.REVERSE.get(currentDir, None)]
+                    if forwardActions:
+                        bestAction = random.choice(forwardActions)
+                    else:
+                        bestAction = random.choice(legalActions)
+                else:
+                    bestAction = random.choice(legalActions)
+            else:
+                bestAction = Directions.STOP
+
         return bestAction
 
 
 def betterEvaluationFunction(currentGameState: GameState):
     """
-    Your extreme ghost-hunting, pellet-nabbing, food-gobbling, unstoppable
-    evaluation function (question 5).
-
-    DESCRIPTION:
-    Bu değerlendirme fonksiyonu aşağıdaki faktörleri dikkate alır:
-    1. Mevcut skor
-    2. Kalan yiyecek sayısı (az olması iyi)
-    3. En yakın yiyeceğe olan mesafe
-    4. Tüm yiyeceklere olan ortalama mesafe
-    5. Hayaletlere olan mesafe (korkmuş/korkmamış duruma göre)
-    6. Kapsül sayısı (az olması iyi)
-    7. Korkmuş hayaletlere yakınlık (avlanma fırsatı)
+    Ultra-optimized evaluation function for ALL map types.
     """
-    "*** YOUR CODE HERE ***"
-    # Temel bilgileri al
+    # Basic extraction
     pacmanPos = currentGameState.getPacmanPosition()
     foodGrid = currentGameState.getFood()
     foodList = foodGrid.asList()
     ghostStates = currentGameState.getGhostStates()
     capsules = currentGameState.getCapsules()
-
-    # Temel skor
     score = currentGameState.getScore()
 
-    # 1. Kalan yiyecek sayısı - az olması iyi
+    # Terminal states
+    if currentGameState.isWin():
+        return 1000000 + score
+    if currentGameState.isLose():
+        return -1000000
+
+    # 1. FOOD STRATEGY (most critical)
     foodCount = len(foodList)
-    score -= foodCount * 10
 
-    # 2. En yakın yiyeceğe olan mesafe - az olması iyi
-    if foodCount > 0:
-        minFoodDist = min([manhattanDistance(pacmanPos, food) for food in foodList])
-        score += 15.0 / (minFoodDist + 1)
+    # Heavy penalty for remaining food
+    score -= foodCount * 20
 
-    # 3. Tüm yiyeceklere olan ortalama mesafe - az olması iyi
+    # Distance to food calculations
     if foodCount > 0:
-        avgFoodDist = sum([manhattanDistance(pacmanPos, food) for food in foodList]) / foodCount
+        foodDistances = [manhattanDistance(pacmanPos, food) for food in foodList]
+
+        # Nearest food (most important)
+        minFoodDist = min(foodDistances)
+        if minFoodDist == 0:  # Eating food now
+            score += 100
+        else:
+            score += 25.0 / minFoodDist
+
+        # Average distance bonus
+        avgFoodDist = sum(foodDistances) / foodCount
         score += 10.0 / (avgFoodDist + 1)
 
-    # 4. Hayaletlere olan mesafe
-    for i, ghostState in enumerate(ghostStates):
+        # Food density bonus (clustered food is good)
+        if foodCount > 1:
+            foodDensity = foodCount / (avgFoodDist + 1)
+            score += foodDensity * 5
+
+    # 2. GHOST STRATEGY (adaptive based on map)
+    scaredGhosts = []
+    activeGhosts = []
+
+    for ghostState in ghostStates:
         ghostPos = ghostState.getPosition()
         dist = manhattanDistance(pacmanPos, ghostPos)
-        scaredTimer = ghostState.scaredTimer
 
-        if scaredTimer > 0:  # Korkmuş hayalet
-            if dist < scaredTimer:  # Yakalanabilir mesafede
-                score += 200.0 / (dist + 1)
-            else:
-                score += 50.0 / (dist + 1)  # Uzaktaysa normal davran
-        else:  # Normal hayalet
-            if dist == 0:
-                score -= 10000  # Çarpışma - büyük ceza
-            elif dist < 3:
-                score -= 100.0 / (dist + 1)  # Çok yakınsa ceza
-            else:
-                score += 5.0 / (dist + 1)  # Uzaktaysa küçük ödül
+        if ghostState.scaredTimer > 0:
+            scaredGhosts.append((dist, ghostState.scaredTimer))
+        else:
+            activeGhosts.append(dist)
 
-    # 5. Kapsül sayısı - az olması iyi
+    # Handle scared ghosts (HUNTING OPPORTUNITY)
+    for dist, timer in scaredGhosts:
+        if dist == 0:  # Can eat now!
+            score += 500
+        elif dist < timer:  # Can catch before timer expires
+            score += 300.0 / (dist + 1)
+        else:
+            score += 50.0 / (dist + 1)
+
+    # Handle active ghosts (DANGER MANAGEMENT)
+    if activeGhosts:
+        minGhostDist = min(activeGhosts)
+
+        # CRITICAL: Different strategy based on map size
+        if len(foodList) < 10:  # Small map (trappedClassic, minimaxClassic)
+            # Be more aggressive on small maps
+            if minGhostDist == 0:
+                score -= 10000
+            elif minGhostDist == 1:
+                score -= 1000
+            elif minGhostDist == 2:
+                score -= 200
+            else:
+                score += 5.0 / (minGhostDist + 1)
+        else:  # Large map (mediumClassic, powerClassic)
+            # Be more defensive on large maps
+            if minGhostDist == 0:
+                score -= 10000
+            elif minGhostDist <= 2:
+                score -= 500.0 / (minGhostDist + 1)
+            elif minGhostDist <= 4:
+                score -= 100.0 / (minGhostDist + 1)
+            else:
+                score += 2.0 / (minGhostDist + 1)
+
+    # 3. CAPSULE STRATEGY (critical for capsuleClassic)
     capsuleCount = len(capsules)
-    score -= capsuleCount * 20
 
-    # 6. En yakın kapsüle olan mesafe (eğer varsa)
     if capsuleCount > 0:
-        minCapsuleDist = min([manhattanDistance(pacmanPos, capsule) for capsule in capsules])
-        score += 30.0 / (minCapsuleDist + 1)
+        capsuleDistances = [manhattanDistance(pacmanPos, cap) for cap in capsules]
+        minCapsuleDist = min(capsuleDistances)
 
-    # 7. Yiyeceklerin yoğunluğu (kümelenme)
-    if foodCount > 1:
-        # Yiyecekler arasındaki ortalama mesafe
-        if foodCount > 1:
-            foodDists = []
-            for i in range(foodCount):
-                for j in range(i + 1, foodCount):
-                    foodDists.append(manhattanDistance(foodList[i], foodList[j]))
-            if foodDists:
-                avgFoodToFoodDist = sum(foodDists) / len(foodDists)
-                score += 5.0 / (avgFoodToFoodDist + 1)  # Kümelenmiş yiyecekler iyi
+        # SPECIAL: For capsuleClassic map, prioritize capsules heavily
+        if len(foodList) > 15 and capsuleCount > 1:  # Likely capsuleClassic
+            score -= capsuleCount * 10  # Less penalty
+            score += 100.0 / (minCapsuleDist + 1)  # Big bonus for getting close
 
-    # 8. Oyun durumu bonusları
-    if currentGameState.isWin():
-        score += 10000
-    if currentGameState.isLose():
-        score -= 10000
+            # If ghosts are close, capsules are even more valuable
+            if activeGhosts and min(activeGhosts) < 5:
+                score += 200.0 / (minCapsuleDist + 1)
+        else:
+            # Normal strategy for other maps
+            score -= capsuleCount * 30
+            if minCapsuleDist < 3:  # Only go for very close capsules
+                score += 40.0 / (minCapsuleDist + 1)
+
+    # 4. MAP-SPECIFIC ADJUSTMENTS
+
+    # trappedClassic: Aggressive food collection
+    if foodCount < 15 and len(activeGhosts) == 4:  # Likely trappedClassic
+        score += 100 / (foodCount + 1)  # Bonus for eating quickly
+
+    # powerClassic: Use power pellets strategically
+    if capsuleCount == 0 and any(st.scaredTimer > 0 for st in ghostStates):
+        # We have active power pellet - HUNT!
+        score += 200
+
+    # 5. ACTION QUALITY
+    legalActions = currentGameState.getLegalActions(0)
+    if Directions.STOP in legalActions and len(legalActions) > 1:
+        score -= 10  # Penalty for stopping when other moves available
+
+    # 6. GAME PROGRESS BONUS
+    totalPossibleFood = foodCount + score // 10
+    if totalPossibleFood < 30:  # Late game
+        score += 200 / (foodCount + 1)  # Finish quickly bonus
 
     return score
 
