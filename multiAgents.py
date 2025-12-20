@@ -150,6 +150,7 @@ class AlphaBetaAgent(MultiAgentSearchAgent):
         "*** YOUR CODE HERE ***"
         util.raiseNotDefined()
 
+
 class ExpectimaxAgent(MultiAgentSearchAgent):
     """
       Your expectimax agent (question 4)
@@ -162,89 +163,134 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
         All ghosts should be modeled as choosing uniformly at random from their
         legal moves.
         """
-        def expecti(state, agentIndex, depth):
-            # Terminal or depth cutoff
+        "*** YOUR CODE HERE ***"
+
+        def expectimax(state, depth, agentIndex):
             if state.isWin() or state.isLose() or depth == self.depth:
-                return self.evaluationFunction(state)
+                return self.evaluationFunction(state), None
 
             numAgents = state.getNumAgents()
-            nextAgent = (agentIndex + 1) % numAgents
-            nextDepth = depth + 1 if nextAgent == 0 else depth
 
-            legal = state.getLegalActions(agentIndex)
-            if not legal:
-                return self.evaluationFunction(state)
+            if agentIndex == 0:  # Pacman - MAX düğümü
+                bestValue = float('-inf')
+                bestAction = None
+                for action in state.getLegalActions(agentIndex):
+                    successor = state.generateSuccessor(agentIndex, action)
+                    nextAgent = (agentIndex + 1) % numAgents
+                    nextDepth = depth + 1 if nextAgent == 0 else depth
+                    value, _ = expectimax(successor, nextDepth, nextAgent)
+                    if value > bestValue:
+                        bestValue = value
+                        bestAction = action
+                return bestValue, bestAction
 
-            if agentIndex == 0:  # Pacman (max node)
-                values = [expecti(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
-                          for action in legal]
-                return max(values)
+            else:  # Ghost - CHANCE düğümü
+                totalValue = 0
+                actions = state.getLegalActions(agentIndex)
+                prob = 1.0 / len(actions) if actions else 0
 
-            # Ghosts (chance node): uniform expectation
-            values = [expecti(state.generateSuccessor(agentIndex, action), nextAgent, nextDepth)
-                      for action in legal]
-            return sum(values) / float(len(values))
+                for action in actions:
+                    successor = state.generateSuccessor(agentIndex, action)
+                    nextAgent = (agentIndex + 1) % numAgents
+                    nextDepth = depth + 1 if nextAgent == 0 else depth
+                    value, _ = expectimax(successor, nextDepth, nextAgent)
+                    totalValue += prob * value
 
-        legalActions = gameState.getLegalActions(0)
-        if not legalActions:
-            return Directions.STOP
+                return totalValue, None
 
-        # Choose the action with highest expectimax value; break ties by order in list
-        bestAction = max(legalActions,
-                         key=lambda action: expecti(gameState.generateSuccessor(0, action), 1, 0))
+        # Kök düğüm için aksiyonu al
+        _, bestAction = expectimax(gameState, 0, 0)
         return bestAction
+
 
 def betterEvaluationFunction(currentGameState: GameState):
     """
     Your extreme ghost-hunting, pellet-nabbing, food-gobbling, unstoppable
     evaluation function (question 5).
 
-    DESCRIPTION: <write something here so we know what you did>
+    DESCRIPTION:
+    Bu değerlendirme fonksiyonu aşağıdaki faktörleri dikkate alır:
+    1. Mevcut skor
+    2. Kalan yiyecek sayısı (az olması iyi)
+    3. En yakın yiyeceğe olan mesafe
+    4. Tüm yiyeceklere olan ortalama mesafe
+    5. Hayaletlere olan mesafe (korkmuş/korkmamış duruma göre)
+    6. Kapsül sayısı (az olması iyi)
+    7. Korkmuş hayaletlere yakınlık (avlanma fırsatı)
     """
-    # Base score from the environment
-    if currentGameState.isWin():
-        return float('inf')
-    if currentGameState.isLose():
-        return float('-inf')
+    "*** YOUR CODE HERE ***"
+    # Temel bilgileri al
+    pacmanPos = currentGameState.getPacmanPosition()
+    foodGrid = currentGameState.getFood()
+    foodList = foodGrid.asList()
+    ghostStates = currentGameState.getGhostStates()
+    capsules = currentGameState.getCapsules()
 
+    # Temel skor
     score = currentGameState.getScore()
 
-    pacPos = currentGameState.getPacmanPosition()
-    foodList = currentGameState.getFood().asList()
-    capsules = currentGameState.getCapsules()
-    ghostStates = currentGameState.getGhostStates()
+    # 1. Kalan yiyecek sayısı - az olması iyi
+    foodCount = len(foodList)
+    score -= foodCount * 10
 
-    # Food heuristic: encourage being close to the nearest food and finishing all food
-    if foodList:
-        closestFood = min(manhattanDistance(pacPos, food) for food in foodList)
-        score += 1.5 / (closestFood + 1.0)
-        score -= 4.0 * len(foodList)
+    # 2. En yakın yiyeceğe olan mesafe - az olması iyi
+    if foodCount > 0:
+        minFoodDist = min([manhattanDistance(pacmanPos, food) for food in foodList])
+        score += 15.0 / (minFoodDist + 1)
 
-    # Capsule heuristic: encourage picking up capsules, more if ghosts are active
-    if capsules:
-        closestCap = min(manhattanDistance(pacPos, cap) for cap in capsules)
-        score += 1.2 / (closestCap + 1.0)
-        score -= 2.5 * len(capsules)
+    # 3. Tüm yiyeceklere olan ortalama mesafe - az olması iyi
+    if foodCount > 0:
+        avgFoodDist = sum([manhattanDistance(pacmanPos, food) for food in foodList]) / foodCount
+        score += 10.0 / (avgFoodDist + 1)
 
-    # Ghost heuristics
-    activeGhostPenalty = 0.0
-    scaredGhostReward = 0.0
+    # 4. Hayaletlere olan mesafe
+    for i, ghostState in enumerate(ghostStates):
+        ghostPos = ghostState.getPosition()
+        dist = manhattanDistance(pacmanPos, ghostPos)
+        scaredTimer = ghostState.scaredTimer
 
-    for ghost in ghostStates:
-        gpos = ghost.getPosition()
-        dist = manhattanDistance(pacPos, gpos)
-        if ghost.scaredTimer > 0:
-            if dist > 0:
-                scaredGhostReward += 2.0 * ghost.scaredTimer / dist
-        else:
+        if scaredTimer > 0:  # Korkmuş hayalet
+            if dist < scaredTimer:  # Yakalanabilir mesafede
+                score += 200.0 / (dist + 1)
+            else:
+                score += 50.0 / (dist + 1)  # Uzaktaysa normal davran
+        else:  # Normal hayalet
             if dist == 0:
-                return float('-inf')
-            activeGhostPenalty += 3.5 / dist
+                score -= 10000  # Çarpışma - büyük ceza
+            elif dist < 3:
+                score -= 100.0 / (dist + 1)  # Çok yakınsa ceza
+            else:
+                score += 5.0 / (dist + 1)  # Uzaktaysa küçük ödül
 
-    score -= activeGhostPenalty
-    score += scaredGhostReward
+    # 5. Kapsül sayısı - az olması iyi
+    capsuleCount = len(capsules)
+    score -= capsuleCount * 20
+
+    # 6. En yakın kapsüle olan mesafe (eğer varsa)
+    if capsuleCount > 0:
+        minCapsuleDist = min([manhattanDistance(pacmanPos, capsule) for capsule in capsules])
+        score += 30.0 / (minCapsuleDist + 1)
+
+    # 7. Yiyeceklerin yoğunluğu (kümelenme)
+    if foodCount > 1:
+        # Yiyecekler arasındaki ortalama mesafe
+        if foodCount > 1:
+            foodDists = []
+            for i in range(foodCount):
+                for j in range(i + 1, foodCount):
+                    foodDists.append(manhattanDistance(foodList[i], foodList[j]))
+            if foodDists:
+                avgFoodToFoodDist = sum(foodDists) / len(foodDists)
+                score += 5.0 / (avgFoodToFoodDist + 1)  # Kümelenmiş yiyecekler iyi
+
+    # 8. Oyun durumu bonusları
+    if currentGameState.isWin():
+        score += 10000
+    if currentGameState.isLose():
+        score -= 10000
 
     return score
+
 
 # Abbreviation
 better = betterEvaluationFunction

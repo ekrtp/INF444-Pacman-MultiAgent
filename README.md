@@ -18,9 +18,18 @@ Tamamlanan Görevler:
 Gerekli dosyalar `multiAgents.py` içerisindedir. Test etmek için aşağıdaki komutlar kullanılabilir:
 
 ### Expectiminimax Testleri
+
 ```bash
 python pacman.py -p ExpectimaxAgent -l trappedClassic -a depth=3 -q -n 10
 python pacman.py -p ExpectimaxAgent -l minimaxClassic -a depth=3 -q -n 10
-python pacman.py -p ExpectimaxAgent -l capsuleClassic -n 3
-python pacman.py -p ExpectimaxAgent -l mediumClassic
-python pacman.py -p ExpectimaxAgent -l powerClassic
+python pacman.py -p ExpectimaxAgent -l capsuleClassic -q -n 3
+python pacman.py -p ExpectimaxAgent -l mediumClassic -q
+python pacman.py -p ExpectimaxAgent -l powerClassic -q
+```
+
+### Değerlendirme Fonksiyonu Testi
+
+```bash
+python pacman.py -p ExpectimaxAgent -l mediumClassic -a evalFn=better -q
+python autograder.py -q q5 --no-graphics
+```
