@@ -30,6 +30,7 @@ python pacman.py -p ExpectimaxAgent -l powerClassic -q
 ### Değerlendirme Fonksiyonu Testi
 
 ```bash
-python pacman.py -p ExpectimaxAgent -l mediumClassic -a evalFn=better -q
+python pacman.py -p ExpectimaxAgent -l mediumClassic -a evalFn=better -q -n 10
+python pacman.py -p ExpectimaxAgent -l mediumClassic -a evalFn=better -f -q
 python autograder.py -q q5 --no-graphics
 ```
